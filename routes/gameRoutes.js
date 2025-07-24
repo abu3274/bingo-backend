@@ -3,11 +3,17 @@ const router = express.Router();
 const Game = require('../models/Game');
 const Player = require('../models/Player');
 
-// Create a new game
+// Create a new game (SHARED)
 router.post('/create', async (req, res) => {
   try {
-const SHARED_GAME_ID = "64a9bc3f2e123abc456def78";
-res.json({ success: true, gameId: SHARED_GAME_ID });
+    const SHARED_GAME_ID = "64a9bc3f2e123abc456def78";
+    res.json({ success: true, gameId: SHARED_GAME_ID });
+  } catch (error) {
+    console.error('[Game Create] Error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Join an existing game
 router.post('/join', async (req, res) => {
   const { gameId, telegramId, card } = req.body;
