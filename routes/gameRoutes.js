@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('express'); 
 const router = express.Router();
 const Game = require('../models/Game');
 const Player = require('../models/Player');
@@ -33,16 +33,17 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// Join an existing game
+// 🔐 All players join the same shared game
 router.post('/join', async (req, res) => {
-  const { gameId, telegramId, card } = req.body;
+  const { telegramId, card } = req.body;
+  const SHARED_GAME_ID = "688295a92553cb2b59293ba5";
 
-  if (!gameId || !telegramId || !card) {
+  if (!telegramId || !card) {
     return res.status(400).json({ error: 'Missing parameters' });
   }
 
   try {
-    const game = await Game.findById(gameId);
+    const game = await Game.findById(SHARED_GAME_ID);
     const player = await Player.findOne({ telegramId });
 
     if (!game || !player) {
