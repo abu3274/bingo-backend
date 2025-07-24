@@ -4,32 +4,32 @@ const Player = require('../models/Player.js');
 
 const router = express.Router();
 
-router.post('/register', async (req, res) => {
-  const { initData } = req.body;
+router.post('/create', async (req, res) => {
+  const { telegramId, name } = req.body;
 
-  const user = verifyTelegramInitData(initData);
-
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid Telegram initData' });
+  if (!telegramId || !name) {
+    return res.status(400).json({ error: 'Missing telegramId or name' });
   }
 
   try {
-    let player = await Player.findOne({ telegramId: user.id });
+    let player = await Player.findOne({ telegramId });
 
     if (!player) {
       player = new Player({
-        telegramId: user.id,
-        username: user.username || '',
-        firstName: user.first_name || '',
+        telegramId,
+        username: '',
+        firstName: name,
         wallet: 100,
       });
       await player.save();
     }
 
-    res.json({ playerId: player._id, wallet: player.wallet, username: player.username });
+    res.json({ playerId: player._id, wallet: player.wallet });
   } catch (err) {
-    res.status(500).json({ error: 'Registration failed' });
+    console.error("[Player Create] Error:", err);
+    res.status(500).json({ error: 'Player creation failed' });
   }
 });
+
 
 module.exports = router;
