@@ -6,7 +6,7 @@ const Player = require('../models/Player');
 // Create a new game (SHARED)
 // ✅ WORKING /create route using real MongoDB logic
 router.post('/create', async (req, res) => {
-  const SHARED_GAME_ID = "64a9bc3f2e123abc456def78"; // Hardcoded shared ID
+  const SHARED_GAME_ID = "688295a92553cb2b59293ba5"; // Hardcoded shared ID
 
   try {
     let game = await Game.findById(SHARED_GAME_ID);
