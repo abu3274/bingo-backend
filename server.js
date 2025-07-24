@@ -9,9 +9,8 @@ const gameRoutes = require('./routes/gameRoutes');
 const bingoSocket = require('./sockets/bingoSocket');
 
 dotenv.config();
+
 const app = express();
-
-
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -24,30 +23,36 @@ app.use(cors({
   credentials: true
 }));
 
+app.use(express.json());
+
+// Setup HTTP server
 const server = http.createServer(app);
+
+// Setup Socket.IO server with CORS
 const io = new Server(server, {
   cors: {
-    origin: '*',
-  },
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true
+  }
 });
 
+// Connect MongoDB
 mongoose
   .connect(process.env.MONGO_URI || 'mongodb://localhost:27017/bingo')
   .then(() => console.log('✅ MongoDB connected'))
   .catch((err) => console.error('MongoDB error:', err));
 
-app.use(cors());
-app.use(express.json());
-
-// ✅ Route usage (these must be routers)
+// Setup routes
 app.use('/api/player', playerRoutes);
 app.use('/api/game', gameRoutes);
 
-// ✅ Pass socket.io to bingoSocket handler
+// Setup socket handlers
 io.on('connection', (socket) => {
   bingoSocket(io, socket);
 });
 
+// Start the server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
