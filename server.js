@@ -3,8 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const cors = require('cors');
-
+const cors = require("cors");
 const playerRoutes = require('./routes/playerRoutes');
 const gameRoutes = require('./routes/gameRoutes');
 const bingoSocket = require('./sockets/bingoSocket');
@@ -12,7 +11,7 @@ const bingoSocket = require('./sockets/bingoSocket');
 dotenv.config();
 const app = express();
 
-const cors = require("cors");
+
 
 const allowedOrigins = [
   "http://localhost:5173",
