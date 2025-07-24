@@ -4,12 +4,31 @@ const Game = require('../models/Game');
 const Player = require('../models/Player');
 
 // Create a new game (SHARED)
+// ✅ WORKING /create route using real MongoDB logic
 router.post('/create', async (req, res) => {
+  const SHARED_GAME_ID = "64a9bc3f2e123abc456def78"; // Hardcoded shared ID
+
   try {
-    const SHARED_GAME_ID = "64a9bc3f2e123abc456def78";
-    res.json({ success: true, gameId: SHARED_GAME_ID });
+    let game = await Game.findById(SHARED_GAME_ID);
+
+    if (!game) {
+      game = new Game({
+        _id: SHARED_GAME_ID,
+        players: [],
+        calledNumbers: [],
+        currentNumber: null,
+        status: 'waiting'
+      });
+
+      await game.save();
+      console.log("✅ Created shared game");
+    } else {
+      console.log("♻️ Shared game already exists");
+    }
+
+    res.json({ success: true, gameId: game._id });
   } catch (error) {
-    console.error('[Game Create] Error:', error);
+    console.error('[Create Shared Game] Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
