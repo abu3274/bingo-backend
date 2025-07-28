@@ -1,36 +1,43 @@
-const { generateCard, checkWin } = require('../utils/bingoLogic');
+const { checkWin } = require('../utils/bingoLogic');
 const Game = require('../models/Game');
 const Player = require('../models/Player');
 
-const activeGames = {}; // In-memory storage to track active game states (call history etc.)
+const SHARED_GAME_ID = '688295a92553cb2b59293ba5'; // 🔒 Always use this shared room
+const activeGames = {}; // In-memory session cache
 
 module.exports = (io) => {
   io.on('connection', (socket) => {
     console.log(`✅ Socket connected: ${socket.id}`);
 
-    // Join game
-    socket.on('join_game', async ({ gameId, playerId }) => {
+    // 🔗 Player joins the shared game
+    socket.on('join_game', async ({ playerId }) => {
       try {
+        const gameId = SHARED_GAME_ID;
         const game = await Game.findById(gameId);
         const player = await Player.findById(playerId);
-        if (!game || !player) return;
+
+        if (!game || !player) {
+          console.warn('🚫 Game or Player not found');
+          return;
+        }
 
         socket.join(gameId);
         console.log(`🧑 Player ${player.name} joined game ${gameId}`);
 
-        // Add player to active memory game state
+        // ✅ Initialize game state in memory from MongoDB once
         if (!activeGames[gameId]) {
           activeGames[gameId] = {
-            calledNumbers: new Set(),
+            calledNumbers: new Set(game.calledNumbers),
             players: {},
-            status: 'waiting',
+            status: game.status,
           };
         }
 
+        // 💾 Track player session
         activeGames[gameId].players[playerId] = {
           socketId: socket.id,
           card: player.card,
-          marks: [],
+          marks: player.marked || [],
           hasWon: false,
         };
 
@@ -40,19 +47,27 @@ module.exports = (io) => {
       }
     });
 
-    // Mark a number on player card
-    socket.on('mark_number', ({ gameId, playerId, number }) => {
+    // ✅ Player marks a number on their card
+    socket.on('mark_number', async ({ playerId, number }) => {
+      const gameId = SHARED_GAME_ID;
       const game = activeGames[gameId];
       if (!game || !game.players[playerId]) return;
 
       const player = game.players[playerId];
-      if (player.hasWon) return;
+      if (player.hasWon || player.marks.includes(number)) return;
 
-      if (!player.marks.includes(number)) {
-        player.marks.push(number);
+      player.marks.push(number);
+
+      // Optional: update DB marked numbers
+      try {
+        await Player.findByIdAndUpdate(playerId, {
+          $addToSet: { marked: number }
+        });
+      } catch (err) {
+        console.error("❌ Error updating marked numbers:", err);
       }
 
-      // Check win
+      // 🏆 Check for win
       const result = checkWin(player.card, new Set([...game.calledNumbers, ...player.marks]));
       if (result.isWin) {
         player.hasWon = true;
@@ -62,8 +77,9 @@ module.exports = (io) => {
       io.to(gameId).emit('player_marked', { playerId, number });
     });
 
-    // Host calls next number
-    socket.on('call_number', ({ gameId }) => {
+    // 🎱 Host calls the next number
+    socket.on('call_number', async () => {
+      const gameId = SHARED_GAME_ID;
       const game = activeGames[gameId];
       if (!game) return;
 
@@ -74,12 +90,22 @@ module.exports = (io) => {
 
       game.calledNumbers.add(newNumber);
       io.to(gameId).emit('number_called', { number: newNumber });
+
+      // 💾 Save to MongoDB
+      try {
+        const dbGame = await Game.findById(gameId);
+        dbGame.calledNumbers = [...game.calledNumbers];
+        dbGame.currentNumber = newNumber;
+        await dbGame.save();
+      } catch (err) {
+        console.error("❌ Failed to persist called number:", err);
+      }
     });
 
-    // Player leaves
+    // ❌ Cleanup on disconnect
     socket.on('disconnect', () => {
       console.log(`❌ Socket disconnected: ${socket.id}`);
-      // You can loop through activeGames to remove player if needed
+      // Optional: remove player socket mapping if needed
     });
   });
 };

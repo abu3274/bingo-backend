@@ -87,36 +87,48 @@ router.get('/:gameId/status', async (req, res) => {
   }
 });
 
-// Call the next number
-router.post('/:gameId/call', async (req, res) => {
-  const { gameId } = req.params;
+// 🔐 Join shared game with real Player model
+router.post('/join', async (req, res) => {
+  const { telegramId, name, card } = req.body;
+  const SHARED_GAME_ID = "688295a92553cb2b59293ba5";
+
+  if (!telegramId || !card || !name) {
+    return res.status(400).json({ error: 'Missing parameters' });
+  }
 
   try {
-    const game = await Game.findById(gameId);
+    let player = await Player.findOne({ telegramId });
+
+    if (!player) {
+      player = new Player({
+        telegramId,
+        name,
+        card,
+        marked: [],
+        wallet: 30,
+        gameId: SHARED_GAME_ID
+      });
+      await player.save();
+    }
+
+    let game = await Game.findById(SHARED_GAME_ID);
     if (!game) {
       return res.status(404).json({ error: 'Game not found' });
     }
 
-    if (game.calledNumbers.length >= 75) {
-      return res.status(400).json({ error: 'All numbers have been called' });
+    const alreadyJoined = game.players.some(p => p.toString() === player._id.toString());
+
+    if (!alreadyJoined) {
+      game.players.push(player._id);
+      await game.save();
     }
 
-    let nextNumber;
-    const usedNumbers = new Set(game.calledNumbers);
-
-    do {
-      nextNumber = Math.floor(Math.random() * 75) + 1;
-    } while (usedNumbers.has(nextNumber));
-
-    game.calledNumbers.push(nextNumber);
-    game.currentNumber = nextNumber;
-    await game.save();
-
-    res.json({ success: true, nextNumber });
+    res.json({ success: true, game });
   } catch (error) {
-    console.error('[Game Call] Error:', error);
+    console.error('[Game Join] Error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 module.exports = router;
