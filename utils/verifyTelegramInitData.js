@@ -1,8 +1,8 @@
-import crypto from 'crypto';
+const crypto = require('crypto');
 
 const BOT_TOKEN = process.env.BOT_TOKEN; // Your actual bot token
 
-export function verifyTelegramInitData(initDataString) {
+function verifyTelegramInitData(initDataString) {
   const parsed = Object.fromEntries(new URLSearchParams(initDataString));
   const hash = parsed.hash;
   delete parsed.hash;
@@ -24,3 +24,5 @@ export function verifyTelegramInitData(initDataString) {
 
   return computedHash === hash ? parsed : null;
 }
+
+module.exports = { verifyTelegramInitData };

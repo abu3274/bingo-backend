@@ -1,111 +1,73 @@
-const { checkWin } = require('../utils/bingoLogic');
-const Game = require('../models/Game');
-const Player = require('../models/Player');
-
-const SHARED_GAME_ID = '688295a92553cb2b59293ba5'; // 🔒 Always use this shared room
-const activeGames = {}; // In-memory session cache
+const GameEngine = require('../gameEngine');
+const { MockPlayerModel } = require('../mockData');
+let gameEngine = null;
 
 module.exports = (io) => {
+  // Initialize the game engine once for the whole server
+  if (!gameEngine) {
+    gameEngine = new GameEngine(io);
+    gameEngine.initialize().catch(err => {
+      console.error("Failed to initialize game engine:", err);
+    });
+  }
+
   io.on('connection', (socket) => {
     console.log(`✅ Socket connected: ${socket.id}`);
 
+    // Send current game state to new connections
+    if (gameEngine.gameState) {
+      socket.emit('game_state_update', {
+        status: gameEngine.gameState.status,
+        calledNumbers: [...gameEngine.gameState.calledNumbers],
+        currentNumber: gameEngine.gameState.currentNumber
+      });
+    }
+
+    // Register a player with Telegram data
+    socket.on('register_player', async ({ telegramId, name }) => {
+      // Create mock player if not exists
+      console.log(`Registering player: ${name} (${telegramId})`);
+      
+      // Generate a unique ID based on telegramId
+      const playerId = `player_${telegramId}`;
+      
+      // Register the player with a random bingo card
+      const playerData = {
+        telegramId,
+        name,
+        card: generateCard(),
+        wallet: 30,
+        marked: [],
+        gameId: "688295a92553cb2b59293ba5"
+      };
+      
+      MockPlayerModel.registerPlayer(playerId, playerData);
+      
+      // Return the player ID and card to the client
+      socket.emit('player_registered', {
+        playerId,
+        playerCard: playerData.card
+      });
+    });
+
     // 🔗 Player joins the shared game
-    socket.on('join_game', async ({ playerId }) => {
-      try {
-        const gameId = SHARED_GAME_ID;
-        const game = await Game.findById(gameId);
-        const player = await Player.findById(playerId);
-
-        if (!game || !player) {
-          console.warn('🚫 Game or Player not found');
-          return;
-        }
-
-        socket.join(gameId);
-        console.log(`🧑 Player ${player.name} joined game ${gameId}`);
-
-        // ✅ Initialize game state in memory from MongoDB once
-        if (!activeGames[gameId]) {
-          activeGames[gameId] = {
-            calledNumbers: new Set(game.calledNumbers),
-            players: {},
-            status: game.status,
-          };
-        }
-
-        // 💾 Track player session
-        activeGames[gameId].players[playerId] = {
-          socketId: socket.id,
-          card: player.card,
-          marks: player.marked || [],
-          hasWon: false,
-        };
-
-        io.to(gameId).emit('player_joined', { playerId, playerName: player.name });
-      } catch (err) {
-        console.error('❌ join_game error:', err);
-      }
+    socket.on('join_game', async (data) => {
+      await gameEngine.playerJoined(socket, data);
     });
 
     // ✅ Player marks a number on their card
-    socket.on('mark_number', async ({ playerId, number }) => {
-      const gameId = SHARED_GAME_ID;
-      const game = activeGames[gameId];
-      if (!game || !game.players[playerId]) return;
-
-      const player = game.players[playerId];
-      if (player.hasWon || player.marks.includes(number)) return;
-
-      player.marks.push(number);
-
-      // Optional: update DB marked numbers
-      try {
-        await Player.findByIdAndUpdate(playerId, {
-          $addToSet: { marked: number }
-        });
-      } catch (err) {
-        console.error("❌ Error updating marked numbers:", err);
-      }
-
-      // 🏆 Check for win
-      const result = checkWin(player.card, new Set([...game.calledNumbers, ...player.marks]));
-      if (result.isWin) {
-        player.hasWon = true;
-        io.to(gameId).emit('player_won', { playerId, winningLine: result.winningLine });
-      }
-
-      io.to(gameId).emit('player_marked', { playerId, number });
+    socket.on('mark_number', async (data) => {
+      await gameEngine.playerMarkedNumber(socket, data);
     });
 
-    // 🎱 Host calls the next number
+    // 🎱 Call next number manually (for admin/testing)
     socket.on('call_number', async () => {
-      const gameId = SHARED_GAME_ID;
-      const game = activeGames[gameId];
-      if (!game) return;
-
-      let newNumber;
-      do {
-        newNumber = Math.floor(Math.random() * 75) + 1;
-      } while (game.calledNumbers.has(newNumber));
-
-      game.calledNumbers.add(newNumber);
-      io.to(gameId).emit('number_called', { number: newNumber });
-
-      // 💾 Save to MongoDB
-      try {
-        const dbGame = await Game.findById(gameId);
-        dbGame.calledNumbers = [...game.calledNumbers];
-        dbGame.currentNumber = newNumber;
-        await dbGame.save();
-      } catch (err) {
-        console.error("❌ Failed to persist called number:", err);
-      }
+      await gameEngine.callNextNumber();
     });
 
     // ❌ Cleanup on disconnect
     socket.on('disconnect', () => {
-      console.log(`❌ Socket disconnected: ${socket.id}`);
-      // Optional: remove player socket mapping if needed
+      gameEngine.playerDisconnected(socket);
     });
   });
 };

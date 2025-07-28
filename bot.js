@@ -3,16 +3,29 @@ const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
 const User = require('./models/User'); // ✅ Import Mongoose model
 const Player = require('./models/Player'); // ✅ adjust path if needed
+const { generateCard } = require('./utils/bingoLogic'); // Import card generation function
+const { MockPlayerModel } = require('./mockData'); // Import mock data for development
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
-const FRONTEND_URL = 'https://your-bingo-frontend.vercel.app';
+// Update the FRONTEND_URL to point to your deployed frontend
+const FRONTEND_URL = 'https://frontend-nu-two-64.vercel.app';
+const SHARED_GAME_ID = '688295a92553cb2b59293ba5'; // Same shared game ID as in gameEngine.js
 
 if (!token) throw new Error("❌ TELEGRAM_BOT_TOKEN not found in .env");
 
-// ✅ Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bingo')
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => console.error('❌ MongoDB error:', err));
+// ✅ Connect to MongoDB if connection string exists, otherwise use mock data
+const useMockData = !process.env.MONGODB_URI;
+
+if (!useMockData) {
+  mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log('✅ Connected to MongoDB'))
+    .catch((err) => {
+      console.error('❌ MongoDB error:', err);
+      console.log('📝 Using mock data instead');
+    });
+} else {
+  console.log('📝 Using mock data (no MongoDB URI provided)');
+}
 
 const bot = new TelegramBot(token, { polling: true });
 
@@ -36,7 +49,7 @@ bot.setMyCommands([
 const mainMenu = {
   reply_markup: {
     keyboard: [
-      ['📝 Register', '🎮 Play']
+      ['📝 Register', '🎮 Play'],
       ['💰 Deposit', '💵 Withdraw'],
       ['💳 Balance', '🔄 Transfer'],
       ['📖 Instruction', '🛠 Support'],
@@ -47,9 +60,81 @@ const mainMenu = {
   }
 };
 
-// ✅ /start
-bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, "🎉 Welcome! Use the menu to begin:", mainMenu);
+// ✅ Create or get player - handles both MongoDB and mock data
+async function getOrCreatePlayer(telegramId, name, phoneNumber = null) {
+  try {
+    if (useMockData) {
+      // Use mock data
+      const playerId = `player_${telegramId}`;
+      const existingPlayer = MockPlayerModel.findById(playerId);
+      
+      if (existingPlayer) {
+        return existingPlayer;
+      }
+      
+      // Create new player with mock data
+      const playerData = {
+        telegramId,
+        name,
+        phoneNumber,
+        card: generateCard(),
+        wallet: 100,
+        marked: [],
+        gameId: SHARED_GAME_ID
+      };
+      
+      return MockPlayerModel.registerPlayer(playerId, playerData);
+    } else {
+      // Use MongoDB
+      let player = await Player.findOne({ telegramId });
+      
+      if (!player) {
+        player = new Player({
+          telegramId,
+          name,
+          phoneNumber,
+          card: generateCard(),
+          wallet: 100,
+          gameId: SHARED_GAME_ID
+        });
+        await player.save();
+      }
+      
+      return player;
+    }
+  } catch (err) {
+    console.error('❌ Error getting/creating player:', err);
+    return null;
+  }
+}
+
+// ✅ /play command - Join the continuous game
+bot.onText(/\/play/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramId = msg.from.id.toString();
+  const name = msg.from.first_name;
+  
+  // Ensure player exists in the system
+  const player = await getOrCreatePlayer(telegramId, name);
+  
+  if (!player) {
+    return bot.sendMessage(chatId, "❌ Failed to create player profile. Please try again later.");
+  }
+  
+  // Send welcome message with main menu
+  bot.sendMessage(chatId, "🎉 Welcome to Bingo Betty! Use the menu to begin:", mainMenu);
+  
+  // Add game parameters to the URL to auto-join the continuous game
+  const gameUrl = `${FRONTEND_URL}?telegramId=${telegramId}&gameId=${SHARED_GAME_ID}`;
+  
+  // Send play button that opens the web app with parameters
+  bot.sendMessage(chatId, "Click below to join the ongoing Bingo game:", {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "🎲 Join Ongoing Game", web_app: { url: gameUrl } }
+      ]]
+    }
+  });
 });
 
 // ✅ /register or 📝 Register
@@ -69,25 +154,34 @@ bot.onText(/\/register/, (msg) => {
     }
   });
 });
+
 bot.on('contact', async (msg) => {
   const contact = msg.contact;
   const chatId = msg.chat.id;
 
   try {
-    const Player = require('./models/Player'); // adjust path if needed
-
-    const existing = await Player.findOne({ telegramId: contact.user_id });
-    if (!existing) {
-      const newPlayer = new Player({
-        telegramId: contact.user_id,
-        name: contact.first_name,
-        phoneNumber: contact.phone_number,
-        wallet: 100 // default
-      });
-      await newPlayer.save();
+    const player = await getOrCreatePlayer(
+      contact.user_id.toString(),
+      contact.first_name,
+      contact.phone_number
+    );
+    
+    if (player) {
       bot.sendMessage(chatId, "✅ You are successfully registered!");
-    } else {
-      bot.sendMessage(chatId, "✅ You are already registered.");
+      
+      // Prompt to play immediately
+      bot.sendMessage(chatId, "Would you like to join the ongoing game now?", {
+        reply_markup: {
+          inline_keyboard: [[
+            { 
+              text: "🎮 Join Now", 
+              web_app: { 
+                url: `${FRONTEND_URL}?telegramId=${contact.user_id}&gameId=${SHARED_GAME_ID}` 
+              } 
+            }
+          ]]
+        }
+      });
     }
   } catch (err) {
     console.error('❌ Contact save error:', err);
@@ -95,16 +189,15 @@ bot.on('contact', async (msg) => {
   }
 });
 
-// top of file
-
-
-// Add inside bot.onText
+// ✅ /balance
 bot.onText(/\/balance/, async (msg) => {
   const chatId = msg.chat.id;
-  const telegramId = msg.from.id;
+  const telegramId = msg.from.id.toString();
 
   try {
-    const player = await Player.findOne({ telegramId });
+    const player = useMockData
+      ? MockPlayerModel.findById(`player_${telegramId}`)
+      : await Player.findOne({ telegramId });
 
     if (!player) {
       return bot.sendMessage(chatId, "❌ You are not registered. Please use /register first.");
@@ -117,19 +210,33 @@ bot.onText(/\/balance/, async (msg) => {
   }
 });
 
+// ✅ Handle text messages
 bot.on('message', async (msg) => {
+  if (!msg.text) return;
+  
   const chatId = msg.chat.id;
+  const telegramId = msg.from.id.toString();
 
   // 🎮 Play
   if (msg.text === '🎮 Play') {
+    // Ensure player exists
+    const player = await getOrCreatePlayer(telegramId, msg.from.first_name);
+    
+    if (!player) {
+      return bot.sendMessage(chatId, "❌ Failed to retrieve player profile. Please register first.");
+    }
+    
     bot.sendMessage(chatId, "🚀 Opening Bingo game...", {
       reply_markup: { remove_keyboard: true }
     });
 
-    bot.sendMessage(chatId, "Click below to start:", {
+    // Add game parameters to URL
+    const gameUrl = `${FRONTEND_URL}?telegramId=${telegramId}&gameId=${SHARED_GAME_ID}`;
+    
+    bot.sendMessage(chatId, "Click below to join the ongoing game:", {
       reply_markup: {
         inline_keyboard: [[
-          { text: "🎲 Play Bingo", web_app: { url: FRONTEND_URL } }
+          { text: "🎲 Join Ongoing Game", web_app: { url: gameUrl } }
         ]]
       }
     });
@@ -145,30 +252,24 @@ bot.on('message', async (msg) => {
       }
     });
   }
-
-  // 📱 Save Contact
-  if (msg.contact) {
+  
+  // 💳 Balance
+  if (msg.text === '💳 Balance') {
     try {
-      const telegramId = msg.from.id.toString();
-      const phoneNumber = msg.contact.phone_number;
-      const name = msg.contact.first_name;
+      const player = useMockData
+        ? MockPlayerModel.findById(`player_${telegramId}`)
+        : await Player.findOne({ telegramId });
 
-      const existingUser = await User.findOne({ telegramId });
-
-      if (existingUser) {
-        existingUser.phoneNumber = phoneNumber;
-        existingUser.name = name;
-        await existingUser.save();
-        bot.sendMessage(chatId, "✅ Your contact has been updated.");
-      } else {
-        const newUser = new User({ telegramId, phoneNumber, name });
-        await newUser.save();
-        bot.sendMessage(chatId, `✅ Thanks ${name}, you are registered!`);
+      if (!player) {
+        return bot.sendMessage(chatId, "❌ You are not registered. Please use 📝 Register first.");
       }
 
+      bot.sendMessage(chatId, `💰 Your current wallet balance is: ${player.wallet} coins.`);
     } catch (err) {
-      console.error("❌ Failed to save contact:", err);
-      bot.sendMessage(chatId, "❌ Error saving your contact. Please try again.");
+      console.error('❌ Balance check error:', err);
+      bot.sendMessage(chatId, "⚠️ Failed to retrieve balance.");
     }
   }
 });
+
+console.log('✅ Telegram bot started');

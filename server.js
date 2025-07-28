@@ -14,11 +14,25 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://your-frontend-domain.com" // Replace with your production frontend URL
+  "https://your-frontend-domain.com", // Replace with your production frontend URL
+  "https://t.me", // Allow Telegram WebApp connections
+  "https://web.telegram.org"
 ];
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is allowed or if it starts with Telegram domains
+    if (allowedOrigins.includes(origin) || 
+        origin.startsWith("https://t.me") || 
+        origin.startsWith("https://web.telegram.org")) {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -31,26 +45,32 @@ const server = http.createServer(app);
 // Setup Socket.IO server with CORS
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: function(origin, callback) {
+      // Same CORS policy as Express
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin) || 
+          origin.startsWith("https://t.me") || 
+          origin.startsWith("https://web.telegram.org")) {
+        return callback(null, true);
+      }
+      
+      callback(new Error('Not allowed by CORS'));
+    },
     methods: ["GET", "POST"],
     credentials: true
   }
 });
 
-// Connect MongoDB
-mongoose
-  .connect(process.env.MONGO_URI || 'mongodb://localhost:27017/bingo')
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch((err) => console.error('MongoDB error:', err));
+// Skip MongoDB connection and use mock data instead
+console.log('📝 Using mock data instead of MongoDB');
 
 // Setup routes
 app.use('/api/player', playerRoutes);
 app.use('/api/game', gameRoutes);
 
-// Setup socket handlers
-io.on('connection', (socket) => {
-  bingoSocket(io, socket);
-});
+// Setup socket handlers - pass io to the bingoSocket module
+bingoSocket(io);
 
 // Start the server
 const PORT = process.env.PORT || 3000;
